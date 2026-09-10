@@ -33,7 +33,7 @@ Frequência de compras < 8
 * Consolidar informações por cliente e categoria de produto.
 * Criar uma variável de classificação para representar o Churn.
 * Dividir os dados em conjuntos de treinamento e teste.
-* Treinar um modelo de classificação utilizando Random Forest.
+* Treinar um modelo de classificação utilizando Regressão Logística.
 * Avaliar o desempenho do modelo.
 * Modularizar o pipeline em diferentes arquivos Python.
 * Realizar inferência para um novo cliente.
@@ -65,7 +65,7 @@ O projeto foi dividido em três etapas principais:
                     │    model_training.py    │
                     │                         │
                     │ • Train/Test 70/30      │
-                    │ • Random Forest         │
+                    │ • Regressão Logística   │
                     │ • Métricas              │
                     └────────────┬────────────┘
                                  │
@@ -89,9 +89,15 @@ ATV_06_Projeto_Modular_Trio/
 ├── data/
 │   └── raw_transactions.csv
 │
+├── docs/
+│   └── Trabalho I - Engenharia de Dados e MLOPs.pdf
+│
 ├── data_processing.py
 ├── model_training.py
 ├── main.py
+├── requirements.txt
+├── .gitignore
+├── LICENSE
 └── README.md
 ```
 
@@ -101,8 +107,9 @@ ATV_06_Projeto_Modular_Trio/
 | --------------------------- | ----------------------------------------------------------------------------------------- |
 | `data/raw_transactions.csv` | Dataset bruto contendo o histórico de transações dos clientes.                            |
 | `data_processing.py`        | Responsável pela leitura, tratamento, agregação dos dados e criação da variável de Churn. |
-| `model_training.py`         | Responsável pelo treinamento do modelo Random Forest e cálculo das métricas.              |
+| `model_training.py`         | Responsável pelo treinamento do modelo de Regressão Logística e cálculo das métricas.               |
 | `main.py`                   | Ponto de entrada da aplicação e responsável pela orquestração do pipeline e inferência.   |
+| `requirements.txt`          | Dependências necessárias para reproduzir o ambiente de execução.                          |
 | `README.md`                 | Documentação do projeto.                                                                  |
 
 ---
@@ -137,7 +144,9 @@ Frequência ≥ 8  →  Não Churn
 
 Este módulo representa a etapa de **Ciência de Dados**.
 
-A função `train_model()` recebe os dados processados e executa as etapas necessárias para treinamento do modelo.
+A função `treinamento_modelo()` recebe os dados processados e executa as etapas necessárias para treinamento do modelo.
+
+A função retorna três objetos: o modelo treinado, a acurácia e a matriz de confusão.
 
 ### Processo de treinamento
 
@@ -155,7 +164,7 @@ Divisão Train/Test
        └── 30% Teste
        │
        ▼
-Random Forest
+Regressão Logística
        │
        ▼
 Avaliação
@@ -164,16 +173,41 @@ Avaliação
 O modelo utilizado é o:
 
 ```python
-RandomForestClassifier
+LogisticRegression
 ```
 
-As principais métricas utilizadas são:
+As métricas retornadas pelo módulo são:
 
 * Acurácia
 * Matriz de Confusão
-* Precision
-* Recall
-* F1-Score
+
+A matriz de confusão é lida da seguinte forma:
+
+```text
+[[VN, FP]
+ [FN, VP]]
+```
+
+| Posição            | Significado                                    |
+| ------------------ | ---------------------------------------------- |
+| Verdadeiro Negativo | Previu cliente ativo e o cliente era ativo     |
+| Falso Positivo      | Previu churn, mas o cliente era ativo          |
+| Falso Negativo      | Previu cliente ativo, mas o cliente era churn  |
+| Verdadeiro Positivo | Previu churn e o cliente era churn             |
+
+### Seleção de features e vazamento de alvo
+
+A variável `churn` é derivada diretamente da regra `frequencia_total < 8`. Manter `frequencia_total` (ou as colunas `count_` que a compõem) entre as features causaria **vazamento de alvo**: o modelo apenas reaprenderia o limiar da regra de rotulagem e atingiria 100% de acurácia sem valor preditivo real.
+
+Por esse motivo, o módulo remove do conjunto de features:
+
+```python
+colunas_drop = ['churn', 'frequencia_total', 'id_cliente'] + colunas_count
+```
+
+O modelo é treinado apenas sobre o **valor gasto por categoria** (`sum_alimentos`, `sum_casa`, `sum_eletronicos`, `sum_livros`, `sum_roupas`), o que torna a acurácia obtida uma medida legítima de desempenho.
+
+O parâmetro `stratify=y` no `train_test_split` preserva a proporção entre as classes nos conjuntos de treino e teste.
 
 ---
 
@@ -194,6 +228,16 @@ Ele é responsável por:
 7. Exibir o resultado da inferência no terminal.
 
 Dessa forma, o projeto mantém as responsabilidades separadas entre os diferentes módulos.
+
+### Consistência entre treino e inferência
+
+A ordem das colunas usada na inferência precisa ser idêntica à do treinamento. Uma divergência de ordem não gera exceção no scikit-learn — o modelo simplesmente produz previsões incorretas de forma silenciosa (*training-serving skew*).
+
+Para evitar isso, o `main.py` obtém a lista de features do próprio modelo treinado, e não de uma lista escrita manualmente:
+
+```python
+features = list(modelo.feature_names_in_)
+```
 
 ---
 
@@ -224,10 +268,9 @@ Dessa forma, o projeto mantém as responsabilidades separadas entre os diferente
 **Scikit-Learn**
 
 * `train_test_split()`
-* `RandomForestClassifier`
+* `LogisticRegression`
 * `accuracy_score()`
 * `confusion_matrix()`
-* `classification_report()`
 
 ---
 
@@ -254,8 +297,16 @@ python --version
 Abra o terminal na pasta raiz do projeto e execute:
 
 ```powershell
-python -m pip install pandas numpy scikit-learn
+python -m pip install -r requirements.txt
 ```
+
+Alternativamente, instalando os pacotes diretamente:
+
+```powershell
+python -m pip install pandas scikit-learn
+```
+
+> O pacote no PyPI chama-se `scikit-learn`. O nome `sklearn` é utilizado apenas na importação dentro do código.
 
 ---
 
@@ -285,51 +336,55 @@ Resultado da previsão
 
 ## Resultado da Execução
 
-Com a base utilizada no projeto, o pipeline apresentou o seguinte resultado:
+Com a base utilizada no projeto (50 clientes, 460 transações), o pipeline apresentou o seguinte resultado:
 
 ```text
 ============================================================
-INICIANDO PIPELINE DE CLASSIFICAÇÃO DE CHURN
+PIPELINE DE CLASSIFICACAO DE CHURN
 ============================================================
 
-1. Carregando e tratando os dados de 'data/raw_transactions.csv'...
+[1/3] Processando dados brutos...
+      50 clientes agregados, 13 colunas geradas.
 
-   -> Dataset processado: 50 clientes mapeados.
+[2/3] Treinando modelo de classificacao...
+      Modelo: LogisticRegression
+      Features utilizadas (5): sum_alimentos, sum_casa, sum_eletronicos, sum_livros, sum_roupas
 
-2. Treinando o modelo de ML (Random Forest) com divisão 70/30...
+Acuracia no conjunto de teste: 93.33%
 
-RESULTADOS E MÉTRICAS DO MODELO:
+Matriz de confusao:
+  Verdadeiro Negativo (previu ativo, era ativo)  : 7
+  Falso Positivo      (previu churn, era ativo)  : 1
+  Falso Negativo      (previu ativo, era churn)  : 0
+  Verdadeiro Positivo (previu churn, era churn)  : 7
 
-   • Acurácia: 100.00%
+[3/3] Inferencia para um novo cliente...
+      Perfil de entrada:
+        sum_alimentos        R$   250.00
+        sum_casa             R$   480.00
+        sum_eletronicos      R$   900.00
+        sum_livros           R$   110.00
+        sum_roupas           R$   320.00
 
-   • Matriz de Confusão:
-
-[[8 0]
- [0 7]]
-
-   • Relatório de Classificação:
-
-              precision    recall  f1-score   support
-
-           0       1.00      1.00      1.00         8
-           1       1.00      1.00      1.00         7
-
-    accuracy                           1.00        15
-
-3. Realizando inferência para um Novo Cliente de Exemplo...
-
-============================================================
-
-RESULTADO DA PREVISÃO DO NOVO CLIENTE:
-
-   • Previsão: 1
-   • Classificação: ALTO RISCO DE CHURN (Inativo)
-   • Confiança do Modelo: 100.00%
+      RESULTADO: ATIVO (sem risco identificado)
+      Probabilidade de churn: 7.41%
 
 ============================================================
 ```
 
-> **Observação:** a acurácia de 100% apresentada corresponde aos resultados obtidos com o conjunto de dados utilizado neste trabalho. Em cenários reais, uma avaliação mais robusta deveria considerar diferentes divisões dos dados, validação cruzada e um conjunto de dados maior e mais representativo.
+### Interpretação dos resultados
+
+| Métrica              | Valor  | Leitura                                                          |
+| -------------------- | -----: | ---------------------------------------------------------------- |
+| Acurácia             | 93,33% | 14 de 15 clientes do conjunto de teste classificados corretamente |
+| Falsos Negativos     |      0 | Nenhum cliente em risco de churn passou despercebido              |
+| Falsos Positivos     |      1 | Um cliente ativo foi sinalizado como risco                        |
+
+Para o cenário de negócio, esse é o perfil de erro desejável: um falso positivo gera uma ação de retenção desnecessária, enquanto um falso negativo significa perder o cliente sem qualquer tentativa de retenção.
+
+O resultado é reproduzível — o parâmetro `random_state=42` fixa a divisão treino/teste, de forma que qualquer execução do pipeline produz os mesmos números.
+
+> **Observação:** a acurácia obtida reflete um conjunto de dados pequeno (50 clientes) e sintético. Em cenários reais, uma avaliação mais robusta deveria considerar validação cruzada, diferentes divisões dos dados e uma base maior e mais representativa.
 
 ---
 
@@ -340,7 +395,7 @@ O desenvolvimento foi organizado em três responsabilidades principais:
 | Papel                          | Responsabilidade                                                                    | Peso |
 | ------------------------------ | ----------------------------------------------------------------------------------- | ---: |
 | Pessoa A — Engenharia de Dados | Leitura do CSV, processamento dos dados, `pivot_table` e criação da regra de Churn. |  35% |
-| Pessoa B — Ciência de Dados    | Treinamento do Random Forest, divisão dos dados e cálculo das métricas.             |  35% |
+| Pessoa B — Ciência de Dados    | Treinamento da Regressão Logística, divisão dos dados e cálculo das métricas.       |  35% |
 | Pessoa C — MLOps & Integração  | Desenvolvimento do `main.py`, orquestração dos módulos e realização da inferência.  |  30% |
 
 ---
@@ -362,7 +417,7 @@ Criação da variável Churn
 Divisão dos dados 70/30
         │
         ▼
-Random Forest
+Regressão Logística
         │
         ▼
 Avaliação do modelo
